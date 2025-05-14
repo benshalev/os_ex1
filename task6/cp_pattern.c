@@ -8,14 +8,14 @@
 #include "Queue.h"
 #define MAX_NUMBER 1000000
 bool generated[MAX_NUMBER + 1] = { false };
+pthread_t* consumers_threads;
+pthread_t* producers_threads;
 int numbers_produced=0;
 ticket_lock global_lock;
 ticket_lock print_lock;
 condition_variable cond;
 Queue queue;
-
-
-
+bool stop = false;
 
 
 /*
@@ -37,13 +37,8 @@ void start_consumers_producers(int consumers, int producers, int seed) {
     condition_variable_init(&cond);
     initializeQueue(&queue);
 
-    pthread_t consumers_threads[consumers];
-    pthread_t producers_threads[producers];
-
     for(int i=0; i<producers ; i++){
-    
         pthread_create(&producers_threads[i], NULL , producer_thread_func, NULL);
-        
     }
 
     for(int j = 0; j < consumers; j++){
@@ -63,20 +58,24 @@ void* producer_thread_func(void* arg){
         if (numbers_produced >= MAX_NUMBER + 1) {
             ticketlock_release(&global_lock);
             condition_variable_broadcast(&cond);
+
             break;
         }
 
         if(!generated[generated_num]){
-           generated[generated_num] = true;
+            generated[generated_num] = true;
             numbers_produced++;
             enqueue(&queue, generated_num);
+        }else{
+            ticketlock_release(&global_lock);
+            continue;
         }
 
         ticketlock_release(&global_lock);
 
 
         char msg[100];
-        sprintf(msg, "Producer %d generated number: %d\n",(int)pthread_self(), generated_num);
+        sprintf(msg, "Producer %lu generated number: %d\n", (unsigned long)pthread_self(), generated_num);
         print_msg(msg);
 
         condition_variable_signal(&cond);
@@ -96,7 +95,7 @@ void* consumer_thread_func(void* arg){
        
         while (isEmpty(&queue)) {
            
-            if (numbers_produced >= MAX_NUMBER + 1) {
+            if (stop) {
                 ticketlock_release(&global_lock);
                 return NULL;
             }
@@ -104,15 +103,14 @@ void* consumer_thread_func(void* arg){
             condition_variable_wait(&cond, &global_lock);
         }
 
-      
         int num = dequeue(&queue);
         ticketlock_release(&global_lock);
 
        
         bool divisible = (num % 6 == 0);
         char msg[100];
-        sprintf(msg, "Consumer %d checked %d. Is it divisible by 6? %s\n",
-                (int)pthread_self(), num, divisible ? "True" : "False");
+        sprintf(msg, "Consumer %lu checked %d. Is it divisible by 6? %s\n",
+                (unsigned long)pthread_self(), num, divisible ? "True" : "False");
         print_msg(msg);
 
        
@@ -127,7 +125,10 @@ void* consumer_thread_func(void* arg){
  */
 void stop_consumers() {
     // TODO: Stop the consumer thread with the given id.
-    
+    ticketlock_acquire(&global_lock);
+    stop = true;
+    ticketlock_release(&global_lock);
+    condition_variable_broadcast(&cond);
 }
 
 /*
@@ -148,6 +149,10 @@ void print_msg(const char* msg) {
  */
 void wait_until_producers_produced_all_numbers() {
     // TODO: Wait until production of numbers (0 to 1,000,000) is complete.
+    while(numbers_produced<(MAX_NUMBER+1)){
+        sched_yield();
+    }
+    return;
 }
 
 /*
@@ -156,7 +161,9 @@ void wait_until_producers_produced_all_numbers() {
  */
 void wait_consumers_queue_empty() {
     // TODO: Return non-zero if the consumer queue is empty.
-    return 0;
+    while(numbers_produced<(MAX_NUMBER+1) || !isEmpty(&queue)){
+        sched_yield();
+    }
 }
 
 
@@ -192,10 +199,34 @@ int main(int argc, char* argv[]) {
     int producers = atoi(argv[2]);
     int seed = atoi(argv[3]);
     
+    consumers_threads = malloc(sizeof(pthread_t) * consumers);
+    if (!consumers_threads) {
+        fprintf(stderr, "Memory allocation failed for consumers_threads\n");
+        return 1;
+    }
+    producers_threads = malloc(sizeof(pthread_t) * producers);
+    
+    if (!producers_threads) {
+        fprintf(stderr, "Memory allocation failed for producers_threads\n");
+        return 1;
+    }
     // TODO: Start producer-consumer process.
     start_consumers_producers(consumers, producers, seed);
     
     // TODO: Wait for threads to finish and clean up resources.
+    wait_until_producers_produced_all_numbers();
+    wait_consumers_queue_empty();
+    stop_consumers();
+
+    for (int i = 0; i < producers; i++) {
+        pthread_join(producers_threads[i], NULL);
+    }
+    for (int j = 0; j < consumers; j++) {
+        pthread_join(consumers_threads[j], NULL);
+    }
+    free(consumers_threads);
+    free(producers_threads);
+    printf("All threads finished. Exiting.\n");
 
 
     return 0;
