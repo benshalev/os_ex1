@@ -19,3 +19,4 @@ void ticketlock_release ( ticket_lock * lock )
  {
  atomic_fetch_add (& lock -> cur_ticket , 1) ;
  }
+ 

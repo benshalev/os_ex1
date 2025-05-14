@@ -30,7 +30,7 @@ void enqueue(Queue* q, int value)
 int dequeue(Queue* q)
 {
     if (isEmpty(q)) {
-        return;
+        return -1;
     }
     q->front++;
     return q->items[q->front];
